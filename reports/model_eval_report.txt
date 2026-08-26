@@ -1,0 +1,13 @@
+MandateIQ — model.py evaluation report
+=============================================
+
+Train size: 815 | Test size (held out): 272
+
+logistic: AUC=0.736, Brier=0.208, LogLoss=0.602
+gbm: AUC=0.648, Brier=0.241, LogLoss=0.676
+
+Selected model: logistic
+
+Note: naive baseline (predict base rate for everyone) has AUC ~0.500 by definition.
+Any AUC meaningfully above 0.500 means the model is learning real, generalizable signal from held-out data
+it was never trained on — this is the honest proof point for 'is the AI doing meaningful work.'
