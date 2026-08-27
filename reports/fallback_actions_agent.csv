@@ -1,0 +1,4 @@
+mandate_id,subscription_amount,payment_link_id,payment_link_url,message
+active_mandate_00018,2499.0,plink_TUk18dgsZz4ppq,https://rzp.io/rzp/geYmQH8,"Dear Customer, your subscription payment of Rs.2499 could not be completed. Please pay manually using the link below to continue your subscription: https://rzp.io/rzp/geYmQH8"
+active_mandate_00027,4999.0,plink_TUk1HC6wkEJKbj,https://rzp.io/rzp/AyzRAPw,"Dear Customer, your subscription payment of Rs.4999 could not be completed automatically. Please pay manually via this link to continue your service: https://rzp.io/rzp/AyzRAPw Thank you."
+active_mandate_00038,2499.0,plink_TUk1PXZsdLnIid,https://rzp.io/rzp/MrGZMRwz,"Dear Customer, your subscription payment of Rs.2499 could not be completed automatically. Please pay manually using this link to continue your service: https://rzp.io/rzp/MrGZMRwz Thank you."
