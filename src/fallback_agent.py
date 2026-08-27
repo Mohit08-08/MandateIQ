@@ -27,6 +27,8 @@ from pathlib import Path
 import razorpay
 from google import genai
 
+import audit_log
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR.parent / "data"
 REPORTS_DIR = SCRIPT_DIR.parent / "reports"
@@ -135,6 +137,13 @@ def run_fallback_agent(side="agent"):
 
         message = draft_fallback_message(gemini_client, mandate_row, link_url)
         print(f"   Message: {message}")
+
+        audit_log.log_event("fallback_action", mandate_row["mandate_id"], side, {
+            "payment_link_id": link_id,
+            "payment_link_url": link_url,
+            "message": message,
+            "subscription_amount": mandate_row["subscription_amount"],
+        })
 
         records.append({
             "mandate_id": mandate_row["mandate_id"],

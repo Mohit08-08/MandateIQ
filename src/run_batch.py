@@ -23,6 +23,7 @@ from datetime import date, datetime
 
 import baseline
 import policy
+import audit_log
 from data_gen import true_probability, MAX_ATTEMPTS
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -62,11 +63,13 @@ def simulate_outcome(mandate_row, payer_archetype, scheduled_date, scheduled_hou
     return bool(rng.random() < prob)
 
 
-def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng):
+def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng, side_name):
     """Runs ONE mandate through a full decide->act->observe loop until
     either success or fallback. Works identically for the agent
     (policy.decide_next_action) and the baseline (baseline.decide_next_action)
-    since both share the same decision interface."""
+    since both share the same decision interface. Every decision and outcome
+    is written to the audit log as it happens (see audit_log.py)."""
+    mandate_id = mandate_row["mandate_id"]
     attempts_used = 1  # the initial failed attempt already happened
     last_attempt_date = mandate_row["attempt_date"]
     retries_taken = 0
@@ -78,6 +81,11 @@ def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng):
         if decision["action"] == "fallback":
             log.append({"step": retries_taken + 1, "action": "fallback",
                         "reason": decision["reason"]})
+            audit_log.log_event("decision", mandate_id, side_name, {
+                "action": "fallback",
+                "reason": decision["reason"],
+                "attempts_used": attempts_used,
+            })
             return {
                 "recovered": False,
                 "recovered_via": "fallback_pending",
@@ -88,6 +96,15 @@ def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng):
         scheduled_date = decision["scheduled_date"]
         scheduled_hour = decision["scheduled_hour"]
         next_attempt_number = attempts_used + 1
+
+        audit_log.log_event("decision", mandate_id, side_name, {
+            "action": "retry",
+            "scheduled_date": scheduled_date,
+            "scheduled_hour": scheduled_hour,
+            "attempt_number": next_attempt_number,
+            "reasoning": decision.get("reasoning", ""),
+            "predicted_success_probability": decision.get("predicted_success_probability"),
+        })
 
         success = simulate_outcome(
             mandate_row, payer_archetype, scheduled_date, scheduled_hour,
@@ -100,6 +117,12 @@ def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng):
             "scheduled_date": str(scheduled_date),
             "scheduled_hour": scheduled_hour,
             "reasoning": decision.get("reasoning", ""),
+            "outcome": "success" if success else "failed",
+        })
+
+        audit_log.log_event("outcome", mandate_id, side_name, {
+            "scheduled_date": scheduled_date,
+            "attempt_number": next_attempt_number,
             "outcome": "success" if success else "failed",
         })
 
@@ -118,6 +141,7 @@ def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng):
 
 
 def run_batch():
+    audit_log.clear_audit_log()  # fresh log for this run, no stale entries
     df = load_batch()
     results = []
 
@@ -134,7 +158,7 @@ def run_batch():
             rng = np.random.default_rng(mandate_seed)
 
             outcome = run_recovery_workflow(
-                mandate_row, mandate_row["payer_archetype"], decide_fn, rng
+                mandate_row, mandate_row["payer_archetype"], decide_fn, rng, side_name
             )
             results.append({
                 "side": side_name,
