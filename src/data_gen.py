@@ -218,7 +218,16 @@ def generate_active_batch(n_mandates=60):
         if row["outcome_success"]:
             row["outcome_success"] = False
         true_prob = row.pop("_true_probability")
-        hidden.append({"mandate_id": mandate_id, "true_probability_at_first_attempt": true_prob})
+        hidden.append({
+            "mandate_id": mandate_id,
+            "true_probability_at_first_attempt": true_prob,
+            "payer_archetype": payer["payer_archetype"],  # needed by run_batch.py's
+                                                            # outcome simulator to score
+                                                            # ANY future candidate date,
+                                                            # not just the first attempt.
+                                                            # Still never exposed to
+                                                            # model.py/policy.py/baseline.py.
+        })
         row["retries_used_so_far"] = 0
         rows.append(row)
     batch_df = pd.DataFrame(rows).drop(columns=["outcome_success"])

@@ -47,6 +47,10 @@ def is_salary_window(day_of_month: int) -> bool:
 def _build_feature_row(mandate_row: dict, attempt_number: int, candidate_date: date, hour: int):
     """Builds the exact feature schema model.py expects, for one candidate
     (date, hour) pair, so we can score it."""
+    prior_reason = mandate_row.get("prior_failure_reason")
+    if prior_reason is None or (isinstance(prior_reason, float) and pd.isna(prior_reason)):
+        prior_reason = "none"
+
     return {
         "attempt_number": attempt_number,
         "day_of_month": candidate_date.day,
@@ -57,7 +61,7 @@ def _build_feature_row(mandate_row: dict, attempt_number: int, candidate_date: d
         "day_of_week": str(candidate_date.weekday()),
         "bank_name": mandate_row["bank_name"],
         "amount_tier": mandate_row["amount_tier"],
-        "prior_failure_reason": mandate_row.get("prior_failure_reason") or "none",
+        "prior_failure_reason": prior_reason,
         "is_salary_window": str(is_salary_window(candidate_date.day)),
     }
 
