@@ -23,6 +23,8 @@ import pandas as pd
 from datetime import date, timedelta
 from pathlib import Path
 
+from config import MAX_ATTEMPTS, is_salary_window
+
 # Paths resolved relative to THIS file's location, not the current working
 # directory — so this works whether you run "python data_gen.py" from
 # inside src/ or "python src/data_gen.py" from the project root.
@@ -48,6 +50,26 @@ DAY_OF_WEEK_EFFECT = {            # Mon=0 ... Sun=6; weekends slightly lower
 AMOUNT_TIER_EFFECT = {"low": 0.3, "medium": 0.0, "high": -0.35}
 ATTEMPT_FATIGUE = 0.15            # each subsequent retry slightly less likely
 NOISE_STD = 0.6                   # random unexplained variation
+
+# Hour-of-day effect — documented assumption: mid-morning through early
+# afternoon retries are modestly more likely to succeed than very-early-
+# morning or late-night attempts, on the general (disclosed) premise that
+# UPI/bank-side balance and settlement batches tend to be freshly processed
+# by mid-morning. This is intentionally a MODEST effect (not dominant),
+# consistent with day/bank/salary-window mattering more than hour.
+# IMPORTANT: this exists so that policy.py's hour-level scheduling choice
+# reflects a REAL causal signal, not noise the model happened to overfit to.
+HOUR_OF_DAY_EFFECT_PEAK_HOUR = 11   # best hour, effect tapers away from this
+HOUR_OF_DAY_EFFECT_MAGNITUDE = 0.18  # max boost/penalty in logit units
+
+
+def hour_of_day_effect(hour: int) -> float:
+    """Smooth, documented hour-of-day effect: peaks near
+    HOUR_OF_DAY_EFFECT_PEAK_HOUR, tapers off symmetrically. Small relative
+    to salary-window/bank/archetype effects by design."""
+    distance = abs(hour - HOUR_OF_DAY_EFFECT_PEAK_HOUR)
+    return HOUR_OF_DAY_EFFECT_MAGNITUDE * max(0.0, 1 - distance / 12)
+
 
 BANKS = {
     # bank_name: (reliability_tier, logit_effect)
@@ -77,8 +99,6 @@ FAILURE_REASONS = [
 ]
 FAILURE_REASON_WEIGHTS = [0.45, 0.2, 0.05, 0.1, 0.2]
 
-MAX_ATTEMPTS = 4  # documented retry-cap assumption, see day2_schema.md
-
 
 def amount_tier(amount: float) -> str:
     if amount < 500:
@@ -88,21 +108,34 @@ def amount_tier(amount: float) -> str:
     return "high"
 
 
-def is_salary_window(day_of_month: int) -> bool:
-    return day_of_month in {1, 2, 3, 28, 29, 30, 31}
-
-
 def true_probability(day_of_month, day_of_week, bank_name, payer_archetype,
-                      amount_tier_val, attempt_number):
-    """The transparent, documented generative formula. See day2_schema.md."""
+                      amount_tier_val, attempt_number, hour_of_day=11,
+                      noise_rng=None):
+    """The transparent, documented generative formula. See day2_schema.md.
+
+    noise_rng: an explicit numpy Generator for the noise term. If None,
+    falls back to this module's own `rng` (used during original dataset
+    generation). Callers that need REPRODUCIBLE, INDEPENDENT scoring — like
+    run_batch.py's outcome simulator — MUST pass their own seeded generator
+    here, or the noise draws will silently consume from a shared global
+    stream whose order depends on unrelated code elsewhere in the program.
+    This was a real bug in an earlier version of this project — see
+    Day-10-audit notes — where run_batch.py believed its per-mandate seeds
+    fully controlled reproducibility, but the noise term was actually
+    coming from this module's shared global `rng`, not the caller's seed.
+    """
+    if noise_rng is None:
+        noise_rng = rng
+
     logit = BASE_LOGIT
     logit += SALARY_WINDOW_BOOST * is_salary_window(day_of_month)
     logit += BANKS[bank_name][1]
     logit += PAYER_ARCHETYPES[payer_archetype][1]
     logit += DAY_OF_WEEK_EFFECT[day_of_week]
     logit += AMOUNT_TIER_EFFECT[amount_tier_val]
+    logit += hour_of_day_effect(hour_of_day)
     logit -= ATTEMPT_FATIGUE * (attempt_number - 1)
-    logit += rng.normal(0, NOISE_STD)
+    logit += noise_rng.normal(0, NOISE_STD)
     return 1 / (1 + np.exp(-logit))
 
 
@@ -153,7 +186,7 @@ def generate_attempt_row(mandate_id, payer, attempt_number, attempt_date):
     hour = int(rng.integers(6, 23))
 
     prob = true_probability(dom, dow, bank_name, payer["payer_archetype"],
-                             tier, attempt_number)
+                             tier, attempt_number, hour_of_day=hour)
     outcome = bool(rng.random() < prob)
     failure_reason = rng.choice(FAILURE_REASONS, p=FAILURE_REASON_WEIGHTS)
 
@@ -198,25 +231,45 @@ def generate_training_history(n_mandates=600):
     return pd.DataFrame(rows)
 
 
-def generate_active_batch(n_mandates=60):
+def generate_active_batch(n_mandates=60, max_resample_attempts=200):
     """Generates the held-out batch of CURRENTLY-FAILED mandates for the
     final demo. Only the first (failed) attempt is generated here — retry
     decisions for these are made LIVE by the model/policy/baseline in
-    run_batch.py, not pre-generated."""
+    run_batch.py, not pre-generated.
+
+    Every row in this batch represents a mandate whose first attempt
+    ACTUALLY failed — not one that succeeded and got its outcome forced to
+    False after the fact (an earlier version of this script did that,
+    which left the stored true_probability inconsistent with the "failed"
+    label; e.g. a mandate could show a hidden 85% true success probability
+    while being labeled as having failed. Fixed here via proper rejection
+    sampling: keep redrawing the attempt's bank/day/hour until a genuine
+    failure occurs, so the stored true_probability is always honestly
+    consistent with the observed outcome)."""
     payers = generate_payer_pool(n_mandates)
     today = date(2026, 8, 1)
     rows = []
     hidden = []
     for i, payer in enumerate(payers):
         mandate_id = f"active_mandate_{i:05d}"
-        first_attempt_date = random_date_in_range(today - timedelta(days=10), today)
-        row = generate_attempt_row(mandate_id, payer, 1, first_attempt_date)
-        # Force this first attempt to have failed (it's the trigger event) —
-        # if it happened to sample as success, resample a failed outcome
-        # bank/day combo by nudging attempt_number in the formula only for
-        # the purposes of this seed record (documented simplification).
-        if row["outcome_success"]:
-            row["outcome_success"] = False
+
+        row = None
+        for _ in range(max_resample_attempts):
+            first_attempt_date = random_date_in_range(today - timedelta(days=10), today)
+            candidate_row = generate_attempt_row(mandate_id, payer, 1, first_attempt_date)
+            if not candidate_row["outcome_success"]:
+                row = candidate_row
+                break
+        if row is None:
+            # Extremely unlikely given the population's failure rate, but
+            # fail loudly rather than silently produce inconsistent data.
+            raise RuntimeError(
+                f"Could not sample a natural first-attempt failure for "
+                f"{mandate_id} after {max_resample_attempts} attempts. "
+                f"Check that true_probability() isn't producing an "
+                f"unrealistically high success rate for this payer/bank mix."
+            )
+
         true_prob = row.pop("_true_probability")
         hidden.append({
             "mandate_id": mandate_id,
@@ -228,9 +281,11 @@ def generate_active_batch(n_mandates=60):
                                                             # Still never exposed to
                                                             # model.py/policy.py/baseline.py.
         })
+        row.pop("outcome_success")  # by construction always False here; not
+                                     # a meaningful column to keep in the batch
         row["retries_used_so_far"] = 0
         rows.append(row)
-    batch_df = pd.DataFrame(rows).drop(columns=["outcome_success"])
+    batch_df = pd.DataFrame(rows)
     hidden_df = pd.DataFrame(hidden)
     return batch_df, hidden_df
 

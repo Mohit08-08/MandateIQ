@@ -17,15 +17,10 @@ apples-to-apples:
 
 from datetime import date, timedelta
 
-MAX_ATTEMPTS = 4            # must match data_gen.py's MAX_ATTEMPTS assumption
-RETRY_WINDOW_DAYS = 10       # how far ahead we're willing to schedule a retry
-MIN_GAP_DAYS = 1             # don't retry the very next day
+from config import MAX_ATTEMPTS, RETRY_WINDOW_DAYS, MIN_GAP_DAYS, is_salary_window
+
 FIXED_FALLBACK_GAP_DAYS = 3  # if no salary window in range, retry every N days
 DEFAULT_HOUR = 11            # simple fixed hour choice (no time-of-day logic)
-
-
-def is_salary_window(day_of_month: int) -> bool:
-    return day_of_month in {1, 2, 3, 28, 29, 30, 31}
 
 
 def decide_next_action(mandate_row: dict, attempts_used: int, last_attempt_date: date):

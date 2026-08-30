@@ -52,21 +52,30 @@ def log_event(event_type: str, mandate_id: str, side: str, payload: dict):
 
 def read_audit_log(mandate_id: str = None, side: str = None):
     """Reads the audit log back, optionally filtered — used by the
-    dashboard's drill-down view."""
+    dashboard's drill-down view. Skips (rather than crashes on) any
+    malformed line, logging a warning — a single corrupted line (e.g. from
+    an interrupted write) shouldn't make the entire log unreadable."""
     if not AUDIT_LOG_PATH.exists():
         return []
     entries = []
+    skipped = 0
     with open(AUDIT_LOG_PATH, "r") as f:
-        for line in f:
+        for line_num, line in enumerate(f, start=1):
             line = line.strip()
             if not line:
                 continue
-            entry = json.loads(line)
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                skipped += 1
+                continue
             if mandate_id and entry.get("mandate_id") != mandate_id:
                 continue
             if side and entry.get("side") != side:
                 continue
             entries.append(entry)
+    if skipped:
+        print(f"[audit_log] Warning: skipped {skipped} malformed line(s) in {AUDIT_LOG_PATH}")
     return entries
 
 

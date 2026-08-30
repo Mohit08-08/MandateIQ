@@ -21,27 +21,52 @@ import joblib
 import pandas as pd
 from pathlib import Path
 
+from config import MAX_ATTEMPTS, RETRY_WINDOW_DAYS, MIN_GAP_DAYS, is_salary_window
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = SCRIPT_DIR.parent / "models"
+MODEL_PATH = MODELS_DIR / "retry_model.joblib"
 
-MAX_ATTEMPTS = 4              # matches data_gen.py / baseline.py — same rules,
-                               # same cap, so the comparison is fair
-RETRY_WINDOW_DAYS = 10         # same lookout window as the baseline, for parity
-MIN_GAP_DAYS = 1
 CANDIDATE_HOURS = [9, 12, 15, 18, 21]
 
 _model = None  # lazy-loaded singleton
 
 
+class ModelNotFoundError(RuntimeError):
+    pass
+
+
+class InvalidMandateError(ValueError):
+    pass
+
+
 def _get_model():
     global _model
     if _model is None:
-        _model = joblib.load(MODELS_DIR / "retry_model.joblib")
+        if not MODEL_PATH.exists():
+            raise ModelNotFoundError(
+                f"No trained model found at {MODEL_PATH}. Run model.py first "
+                f"to train and save retry_model.joblib before calling "
+                f"policy.decide_next_action()."
+            )
+        _model = joblib.load(MODEL_PATH)
     return _model
 
 
-def is_salary_window(day_of_month: int) -> bool:
-    return day_of_month in {1, 2, 3, 28, 29, 30, 31}
+REQUIRED_FIELDS = [
+    "bank_name", "payer_historical_success_rate", "payer_tenure_months",
+    "subscription_amount", "amount_tier",
+]
+
+
+def _validate_mandate_row(mandate_row: dict):
+    missing = [f for f in REQUIRED_FIELDS if f not in mandate_row
+               or mandate_row.get(f) is None]
+    if missing:
+        raise InvalidMandateError(
+            f"mandate_row is missing required field(s): {missing}. "
+            f"policy.decide_next_action() cannot score candidates without them."
+        )
 
 
 def _build_feature_row(mandate_row: dict, attempt_number: int, candidate_date: date, hour: int):
@@ -79,6 +104,7 @@ def decide_next_action(mandate_row: dict, attempts_used: int, last_attempt_date:
     if attempts_used >= MAX_ATTEMPTS:
         return {"action": "fallback", "reason": "max_attempts_reached"}
 
+    _validate_mandate_row(mandate_row)
     model = _get_model()
     next_attempt_number = attempts_used + 1
 

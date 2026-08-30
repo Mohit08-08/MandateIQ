@@ -1,0 +1,36 @@
+{
+  "trained_at_utc": "2026-08-30T07:06:00.202328+00:00",
+  "sklearn_version": "1.9.0",
+  "selected_model": "logistic",
+  "numeric_features": [
+    "attempt_number",
+    "day_of_month",
+    "hour_of_day",
+    "payer_historical_success_rate",
+    "payer_tenure_months",
+    "subscription_amount"
+  ],
+  "categorical_features": [
+    "day_of_week",
+    "bank_name",
+    "amount_tier",
+    "prior_failure_reason",
+    "is_salary_window"
+  ],
+  "target": "outcome_success",
+  "train_size": 792,
+  "test_size": 264,
+  "held_out_test_auc": 0.6945,
+  "held_out_test_brier": 0.2219,
+  "cross_validation": {
+    "logistic": {
+      "mean_auc": 0.6661,
+      "std_auc": 0.0425
+    },
+    "gbm": {
+      "mean_auc": 0.6308,
+      "std_auc": 0.0314
+    }
+  },
+  "note": "held_out_test_auc/brier reflect a single train/test split; cross_validation gives the mean +/- std across 5 folds on the training data only, for an honest sense of variance. Both are reported so neither number is presented as more certain than it is."
+}

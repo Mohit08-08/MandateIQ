@@ -3,20 +3,20 @@ MandateIQ — Batch run results
 
 [AGENT]
   Mandates in batch:      60
-  Recovered:              57 (95.0%)
-  Total value at risk:    Rs.93,840
-  Total value recovered:  Rs.83,843
+  Recovered:              56 (93.3%)
+  Total value at risk:    Rs.123,340
+  Total value recovered:  Rs.118,044
   Avg retries per mandate:1.40
 
 [BASELINE]
   Mandates in batch:      60
-  Recovered:              51 (85.0%)
-  Total value at risk:    Rs.93,840
-  Total value recovered:  Rs.71,849
-  Avg retries per mandate:1.80
+  Recovered:              53 (88.3%)
+  Total value at risk:    Rs.123,340
+  Total value recovered:  Rs.102,847
+  Avg retries per mandate:1.55
 
 [HEADLINE RESULT]
-  Agent recovery rate:    95.0%
-  Baseline recovery rate: 85.0%
-  Lift:                   +10.0 percentage points (+11.8% relative)
-  Additional Rs. recovered by agent vs baseline: Rs.11,994
+  Agent recovery rate:    93.3%
+  Baseline recovery rate: 88.3%
+  Lift:                   +5.0 percentage points (+5.7% relative)
+  Additional Rs. recovered by agent vs baseline: Rs.15,197

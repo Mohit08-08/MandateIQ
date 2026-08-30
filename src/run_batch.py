@@ -19,12 +19,13 @@ Usage:
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date
 
 import baseline
 import policy
 import audit_log
-from data_gen import true_probability, MAX_ATTEMPTS
+from data_gen import true_probability
+from config import MAX_ATTEMPTS
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR.parent / "data"
@@ -37,11 +38,42 @@ REPORTS_DIR.mkdir(exist_ok=True)
 # retried here" outcomes, not generating new ground-truth data.
 SIM_SEED = 777
 
+# Defense-in-depth safety cap: the decide->act loop should always terminate
+# via baseline.py/policy.py hitting MAX_ATTEMPTS, but if either ever has a
+# bug that fails to return "fallback", this hard ceiling prevents an
+# infinite loop instead of hanging the batch run silently.
+MAX_LOOP_ITERATIONS = MAX_ATTEMPTS + 2
+
+
+class DataIntegrityError(Exception):
+    """Raised when the batch/hidden-outcomes data doesn't merge cleanly —
+    fail loudly rather than silently simulate against missing/NaN fields."""
+    pass
+
 
 def load_batch():
-    batch = pd.read_csv(DATA_DIR / "active_batch.csv")
-    hidden = pd.read_csv(DATA_DIR / "active_batch_hidden_outcomes.csv")
+    batch_path = DATA_DIR / "active_batch.csv"
+    hidden_path = DATA_DIR / "active_batch_hidden_outcomes.csv"
+    if not batch_path.exists() or not hidden_path.exists():
+        raise FileNotFoundError(
+            f"Missing input data. Expected both {batch_path} and "
+            f"{hidden_path} to exist — run data_gen.py first."
+        )
+
+    batch = pd.read_csv(batch_path)
+    hidden = pd.read_csv(hidden_path)
     merged = batch.merge(hidden, on="mandate_id", how="left")
+
+    missing = merged[merged["payer_archetype"].isna()]
+    if len(missing) > 0:
+        raise DataIntegrityError(
+            f"{len(missing)} mandate(s) in active_batch.csv have no matching "
+            f"row in active_batch_hidden_outcomes.csv (payer_archetype came "
+            f"back null after merge): {missing['mandate_id'].tolist()}. "
+            f"This means the two files are out of sync — re-run data_gen.py "
+            f"to regenerate both together, don't mix files from different runs."
+        )
+
     merged["attempt_date"] = pd.to_datetime(merged["attempt_date"]).dt.date
     return merged
 
@@ -51,7 +83,16 @@ def simulate_outcome(mandate_row, payer_archetype, scheduled_date, scheduled_hou
     """Uses the SAME transparent formula from data_gen.py to decide whether
     this specific scheduled retry succeeds. This is what makes the
     simulation honest: it's not a new made-up rule, it's the same generative
-    truth used to build the training data in the first place."""
+    truth used to build the training data in the first place.
+
+    IMPORTANT: `rng` (the caller's per-mandate, per-side seeded generator)
+    is passed all the way into true_probability's noise term via
+    noise_rng=rng. An earlier version of this function did NOT do this —
+    the noise term silently drew from data_gen's own module-global RNG
+    instead, which meant the "independent, reproducible per-mandate/per-side
+    randomness" this file's docstring promised wasn't actually true. Fixed:
+    now the ENTIRE outcome (noise + Bernoulli draw) is controlled by the one
+    seeded generator for this specific mandate and side."""
     prob = true_probability(
         day_of_month=scheduled_date.day,
         day_of_week=scheduled_date.weekday(),
@@ -59,8 +100,27 @@ def simulate_outcome(mandate_row, payer_archetype, scheduled_date, scheduled_hou
         payer_archetype=payer_archetype,
         amount_tier_val=mandate_row["amount_tier"],
         attempt_number=attempt_number,
+        hour_of_day=scheduled_hour,
+        noise_rng=rng,
     )
     return bool(rng.random() < prob)
+
+
+REQUIRED_MANDATE_FIELDS = [
+    "bank_name", "payer_historical_success_rate", "payer_tenure_months",
+    "subscription_amount", "amount_tier",
+]
+
+
+def _validate_mandate_row(mandate_row: dict, mandate_id: str):
+    missing = [f for f in REQUIRED_MANDATE_FIELDS if f not in mandate_row
+               or pd.isna(mandate_row.get(f))]
+    if missing:
+        raise DataIntegrityError(
+            f"Mandate {mandate_id} is missing required field(s): {missing}. "
+            f"Cannot make a scheduling decision without these — check the "
+            f"upstream data generation/merge step."
+        )
 
 
 def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng, side_name):
@@ -68,15 +128,29 @@ def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng, side_nam
     either success or fallback. Works identically for the agent
     (policy.decide_next_action) and the baseline (baseline.decide_next_action)
     since both share the same decision interface. Every decision and outcome
-    is written to the audit log as it happens (see audit_log.py)."""
+    is written to the audit log as it happens (see audit_log.py).
+
+    Includes a defense-in-depth iteration cap (MAX_LOOP_ITERATIONS): the
+    loop should always terminate because baseline.py/policy.py enforce
+    MAX_ATTEMPTS internally, but this guards against a future bug in either
+    silently never returning 'fallback', which would otherwise hang the
+    whole batch run."""
     mandate_id = mandate_row["mandate_id"]
+    _validate_mandate_row(mandate_row.to_dict(), mandate_id)
+
     attempts_used = 1  # the initial failed attempt already happened
     last_attempt_date = mandate_row["attempt_date"]
     retries_taken = 0
     log = []
 
-    while True:
-        decision = decide_fn(mandate_row.to_dict(), attempts_used, last_attempt_date)
+    for _iteration in range(MAX_LOOP_ITERATIONS):
+        try:
+            decision = decide_fn(mandate_row.to_dict(), attempts_used, last_attempt_date)
+        except Exception as e:
+            raise RuntimeError(
+                f"decide_fn ({side_name}) raised an error for mandate "
+                f"{mandate_id} at attempts_used={attempts_used}: {e}"
+            ) from e
 
         if decision["action"] == "fallback":
             log.append({"step": retries_taken + 1, "action": "fallback",
@@ -139,10 +213,25 @@ def run_recovery_workflow(mandate_row, payer_archetype, decide_fn, rng, side_nam
         # loop continues; next iteration's decide_fn call will hit the
         # MAX_ATTEMPTS check and return fallback if exhausted
 
+    # Should be unreachable in normal operation — baseline.py/policy.py are
+    # both required to return "fallback" once attempts_used >= MAX_ATTEMPTS.
+    # If we get here, something upstream has a bug; fail loudly instead of
+    # silently truncating results.
+    raise RuntimeError(
+        f"Mandate {mandate_id} ({side_name}) exceeded MAX_LOOP_ITERATIONS="
+        f"{MAX_LOOP_ITERATIONS} without reaching success or fallback. This "
+        f"indicates decide_fn is not correctly enforcing its MAX_ATTEMPTS "
+        f"cap — this is a bug, not expected behavior."
+    )
+
 
 def run_batch():
     audit_log.clear_audit_log()  # fresh log for this run, no stale entries
     df = load_batch()
+    if len(df) == 0:
+        raise DataIntegrityError(
+            "active_batch.csv has 0 rows — nothing to run. Re-run data_gen.py."
+        )
     results = []
 
     for side_name, decide_fn, seed_offset in [

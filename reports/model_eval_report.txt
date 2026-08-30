@@ -1,12 +1,18 @@
 MandateIQ — model.py evaluation report
 =============================================
 
-Train size: 815 | Test size (held out): 272
+Train size: 792 | Test size (held out): 264
 
-logistic: AUC=0.736, Brier=0.208, LogLoss=0.602
-gbm: AUC=0.647, Brier=0.241, LogLoss=0.677
+logistic:
+  Held-out test: AUC=0.695, Brier=0.222 (naive Brier=0.250), LogLoss=0.635
+  5-fold CV (train only): AUC=0.666 +/- 0.043
 
-Selected model: logistic
+gbm:
+  Held-out test: AUC=0.672, Brier=0.232 (naive Brier=0.250), LogLoss=0.659
+  5-fold CV (train only): AUC=0.631 +/- 0.031
+
+Selected: logistic
+Final held-out AUC=0.695, Brier=0.222
 
 Note: naive baseline (predict base rate for everyone) has AUC ~0.500 by definition.
 Any AUC meaningfully above 0.500 means the model is learning real, generalizable signal from held-out data
