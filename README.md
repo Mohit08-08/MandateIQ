@@ -1,42 +1,120 @@
 # MandateIQ
 
-An ML-driven, policy-bounded agent that decides *when* to retry a failed UPI
-Autopay/e-mandate debit, instead of using a fixed retry schedule — benchmarked
-against a documented smart-rule baseline on a synthetic batch, with hard
-safety caps and a full audit trail.
+**An ML-driven, policy-bounded agent that decides *when* to retry a failed UPI Autopay/e-mandate debit** — instead of a fixed retry schedule — benchmarked against a documented smart-rule baseline, with hard safety caps and a full, queryable audit trail.
 
-**Built for Razorpay AI Buildathon 2026 — AI Revenue Recovery track.**
+Built solo for Razorpay AI Buildathon 2026 — **AI Revenue Recovery** track.
 
-> Note: this README is a working placeholder. Full writeup (methodology,
-> results, how to run, limitations) lands here on Day 13.
+---
 
-## Status
-- [x] Day 1-2: Synthetic mandate-failure data generation, documented methodology
-- [x] Day 4: Retry-success probability model, trained + validated (AUC 0.736 on held-out test set)
-- [x] Day 5: Smart-rule baseline + policy engine (hard-bounded)
-- [ ] Day 6: Batch runner + outcome simulation (agent vs. baseline)
-- [ ] Day 7-8: Fallback recovery agent (Gemini + Razorpay test-mode Payment Links)
-- [ ] Day 9: Audit trail
-- [ ] Day 10-11: Dashboard
-- [ ] Day 12: Full validation run
-- [ ] Day 13: Full README + architecture diagram
-- [ ] Day 14-15: Pitch video + submission
+## Headline result
+
+| | Agent | Smart-rule baseline |
+|---|---|---|
+| Recovery rate | **93.3%** (56/60) | 88.3% (53/60) |
+| Avg. retries per mandate | **1.40** | 1.55 |
+| Value recovered | ₹1,18,044 | ₹1,02,847 |
+
+**Lift: +5.0 percentage points (+5.7% relative), ₹15,197 additional value recovered on the same 60-mandate held-out batch — with the agent using *fewer* retries, not more.**
+
+The baseline isn't a strawman: it already targets the nearest salary-credit window within a 10-day lookout, which is what a competent ops analyst would do by hand. The agent beats it using a real, cross-validated ML model (AUC 0.695 held-out / 0.666±0.043 across 5-fold CV) picking retry timing at day-and-hour granularity, bounded by a deterministic policy engine that enforces the retry cap in code — never in a prompt.
+
+These numbers are reproducible from a single seed (see [Methodology](#methodology--honesty)) and are verified by an automated fresh-clone test — not hand-run once and screenshotted.
+
+---
+
+## What this actually is
+
+1. **A trained model** (`src/model.py`) predicts the probability a given retry attempt succeeds, using only observable signal (bank, day/hour, payer history, amount) — never the hidden ground-truth driver used to generate the simulation.
+2. **A deterministic policy engine** (`src/policy.py`) consumes that prediction but enforces every hard safety rule itself: max retry attempts, minimum gap between retries, retry-window bounds. The model proposes; the policy disposes.
+3. **A batch runner** (`src/run_batch.py`) simulates the full decide→act→observe loop for every mandate, for both the agent and the baseline, and produces the comparison above.
+4. **A fallback agent** (`src/fallback_agent.py`) handles mandates that exhaust their retry cap: creates a real Razorpay test-mode Payment Link, drafts a customer message with Gemini, and **programmatically verifies** the message contains the correct amount and link before it's used — an LLM never gets to just be trusted on a message about money.
+5. **A full audit trail** (`src/audit_log.py`) logs every decision, its reasoning, and its outcome — queryable per mandate, per side.
+6. **A FastAPI backend + React dashboard** (`backend/`, `dashboards/`) — a thin, honest read layer over the already-computed, already-tested results above. The dashboard cannot show a number that disagrees with what the CLI scripts already proved, because it never recomputes anything.
+
+---
 
 ## Quick start
+
+### 1. Core pipeline (Python)
 ```bash
 pip install -r requirements.txt
 cd src
-python data_gen.py      # generates data/ CSVs
-python model.py          # trains and validates the model
-python baseline.py       # smoke-test the baseline
-python policy.py         # smoke-test the agent's policy engine
+python data_gen.py    # generates synthetic training + held-out batch data
+python model.py       # trains + cross-validates the retry-timing model
+python run_batch.py   # runs the agent vs. baseline comparison -> the headline result above
 ```
 
-## Why this matters (short version)
-UPI Autopay/e-mandate debits fail on a fixed retry schedule today, wasting
-NPCI-capped retry attempts on low-probability timing. MandateIQ predicts
-*when* a retry is most likely to succeed, enforces hard safety caps in code
-(not prompts), and falls back to a real Razorpay test-mode payment link when
-retries are exhausted — with every decision logged and explainable.
+### 2. Automated tests
+```bash
+pip install pytest --break-system-packages   # if not already installed
+pytest tests/ -v      # 21 tests: safety caps, no label leakage, audit log integrity,
+                       # generative determinism, message verification
+```
 
-See `docs/day2_schema.md` for the full synthetic-data methodology.
+### 3. Fallback agent (requires free API keys — see below)
+```bash
+cd src
+python fallback_agent.py   # only needed for mandates that exhaust their retry cap
+```
+Requires `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` (free Razorpay test-mode keys — no KYC needed) and `GEMINI_API_KEY` (free tier, no card needed) as environment variables. See `.env.example`.
+
+> **Honesty note:** this step needs live API calls, which can't be exercised in an automated CI-style check the way the rest of this README's claims can — it's been run and manually verified against real Razorpay test-mode links and real Gemini output, but isn't covered by the pytest suite. The `verify_message()` function it calls *is* covered by automated tests.
+
+### 4. Backend API
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+### 5. Dashboard
+```bash
+cd dashboards
+npm install
+npm run dev
+```
+Open the URL Vite prints (typically `http://localhost:5173`). Requires the backend running simultaneously (step 4).
+
+---
+
+## Project structure
+
+```
+MandateIQ/
+├── src/                     Core pipeline
+│   ├── config.py            Shared constants (retry cap, windows) — single source of truth
+│   ├── data_gen.py          Synthetic data generator (documented generative formula)
+│   ├── model.py             Model training, 5-fold CV, calibration check, metadata export
+│   ├── baseline.py          The smart-rule competitor (not a strawman)
+│   ├── policy.py            The agent's decision-maker (model + hard-coded safety bounds)
+│   ├── run_batch.py         Batch simulation, agent vs. baseline
+│   ├── fallback_agent.py    Real Razorpay + Gemini fallback path, with verification
+│   └── audit_log.py         Structured, queryable decision logging
+├── tests/
+│   └── test_mandateiq.py    21 tests covering safety, correctness, and no-leakage properties
+├── backend/
+│   └── main.py               FastAPI read layer over reports/, models/, data/
+├── dashboards/                React + Vite + Tailwind dashboard
+├── data/                     Generated CSVs (regenerated by data_gen.py)
+├── models/                   Trained model + metadata (regenerated by model.py)
+├── reports/                  Batch results, audit log, eval reports (regenerated by run_batch.py)
+└── docs/                     Design/methodology notes from each build day
+```
+
+---
+
+## Methodology & honesty
+
+- **All synthetic data is generated from a documented, auditable logistic formula** in `data_gen.py` (salary-window effect, bank reliability tier, day-of-week, amount tier, hour-of-day, attempt fatigue — every coefficient is a named, commented constant, not a buried magic number). See `docs/day2_schema.md`.
+- **No label leakage**: the model never sees the hidden `payer_archetype` used to generate outcomes — only observable proxies (e.g. `payer_historical_success_rate`). Verified by an automated test, not just an assertion in prose.
+- **The baseline is genuinely competitive**, not a strawman — it targets the same salary-window signal a smart human analyst would use.
+- **This project went through a full internal audit** (see commit history) that found and fixed two real bugs: a shared-RNG reproducibility issue that made simulation outcomes silently order-dependent, and a data-generation inconsistency where a forced "failed" label didn't match its underlying true probability. Fixing these **reduced** the headline lift from an earlier, buggy +10.0pp to the current, correct +5.0pp — a smaller number that is actually true beats a larger number that wasn't.
+- **This README's claims are backed by an automated fresh-clone reproducibility test**: every file was regenerated from nothing (no cached model, no cached data) and every number above was reproduced exactly, on the same run that produced this document.
+
+---
+
+## Tech stack
+
+Python (pandas, scikit-learn, joblib) for the ML pipeline · FastAPI for the API layer · React + Vite + Tailwind CSS v4 + Recharts for the dashboard · Razorpay test-mode Payment Links API · Google Gemini API (free tier) · pytest for automated testing.
+
+**Total cost to build and run: ₹0** — Razorpay test mode is free by design, Gemini's free tier requires no card, and the ML stack is entirely local/open-source.
