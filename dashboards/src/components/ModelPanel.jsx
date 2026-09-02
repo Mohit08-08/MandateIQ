@@ -9,7 +9,7 @@
 export default function ModelPanel({ model }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div className="rounded-2xl border border-ink-600 bg-ink-800 p-6">
+      <div className="card-interactive rounded-2xl border border-ink-600 bg-ink-800 p-6">
         <h3 className="font-display text-sm uppercase tracking-widest text-text-faint mb-4">
           Model performance
         </h3>
@@ -39,7 +39,7 @@ export default function ModelPanel({ model }) {
         </p>
       </div>
 
-      <div className="rounded-2xl border border-ink-600 bg-ink-800 p-6">
+      <div className="card-interactive rounded-2xl border border-ink-600 bg-ink-800 p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-display text-sm uppercase tracking-widest text-text-faint">
             Features used

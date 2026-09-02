@@ -1,5 +1,5 @@
 {
-  "trained_at_utc": "2026-08-30T07:06:00.202328+00:00",
+  "trained_at_utc": "2026-09-01T04:03:16.887189+00:00",
   "sklearn_version": "1.9.0",
   "selected_model": "logistic",
   "numeric_features": [

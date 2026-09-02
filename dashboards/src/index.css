@@ -5,9 +5,11 @@
   --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  /* Deep ink-navy base — this is financial infrastructure, not a
-     marketing landing page, so the palette reads as a working terminal
-     rather than a generic light "AI dashboard" template. */
+  /* Dark theme values (default). Every component uses these token
+     classes (bg-ink-900, text-text-primary, etc.) — never raw hex —
+     which is what makes the [data-theme="light"] override below able to
+     re-theme the ENTIRE app by redefining these same custom properties,
+     without touching a single component file. */
   --color-ink-950: #070B14;
   --color-ink-900: #0B1220;
   --color-ink-800: #131B2E;
@@ -19,18 +21,80 @@
   --color-text-muted: #8891A8;
   --color-text-faint: #5B6480;
 
-  /* Signature accent: the agent's own color. Used deliberately and
-     sparingly — this is the ONE bold color in the system. */
   --color-recovery: #2DD4A7;
   --color-recovery-dim: #1B8F70;
-
-  /* Functional colors — used ONLY for data semantics, never as identity. */
   --color-baseline: #F2A33D;
   --color-fail: #E2574C;
+}
+
+/* Explicit, defensive base sizing — never rely on an assumed browser
+   default. 16px root matches the requested body-text scale exactly. */
+html {
+  font-size: 16px;
+}
+
+/* ---- Light theme override ---------------------------------------
+   Same token NAMES, different values. Accent colors (recovery/baseline/
+   fail) are deepened slightly versus the dark-theme versions, since the
+   original values are calibrated for contrast against a near-black
+   background and would under-contrast as text/borders on white. */
+/* ---- Light theme override ---------------------------------------
+   Same token NAMES, different values — restrained fintech palette, not
+   an AI-generated look. Warm neutral background (not cool gray, not
+   pure white everywhere), smaller radii than dark theme's terminal
+   aesthetic, and accent colors deepened for AA contrast on white. */
+[data-theme="light"] {
+  --color-ink-950: #EFEDE8;
+  --color-ink-900: #FAF9F6;
+  --color-ink-800: #FFFFFF;
+  --color-ink-700: #F4F2EE;
+  --color-ink-600: #E1E4EA;
+  --color-ink-500: #C7CCD6;
+
+  --color-text-primary: #16202E;
+  --color-text-muted: #55606F;
+  --color-text-faint: #8992A0;
+
+  --color-recovery: #0E8F6C;
+  --color-recovery-dim: #0B7457;
+  --color-baseline: #A6690A;
+  --color-fail: #C13B31;
+
+  /* Smaller, more restrained radii than the dark terminal aesthetic —
+     "small-to-medium," never giant rounded cards. */
+  --radius-2xl: 0.625rem;
+  --radius-xl: 0.5rem;
+  --radius-lg: 0.4rem;
 }
 
 body {
   background-color: var(--color-ink-900);
   color: var(--color-text-primary);
   font-family: var(--font-body);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Card lift micro-interaction — used on hoverable panels (mandates table
+   rows already have their own hover state; this is for the card-level
+   containers on Overview/Model/Fallback tabs). */
+.card-interactive {
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+.card-interactive:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-ink-500);
+}
+
+::selection {
+  background: rgba(45, 212, 167, 0.25);
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .card-interactive {
+  box-shadow: 0 1px 2px rgba(22, 32, 46, 0.04);
+}
+[data-theme="light"] .card-interactive:hover {
+  transform: none;
+  box-shadow: 0 2px 6px rgba(22, 32, 46, 0.06);
+  border-color: var(--color-ink-500);
 }

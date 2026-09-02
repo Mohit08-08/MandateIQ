@@ -205,6 +205,12 @@ def generate_attempt_row(mandate_id, payer, attempt_number, attempt_date):
         "subscription_amount": subscription_amount,
         "amount_tier": tier,
         "prior_failure_reason": None if attempt_number == 1 else failure_reason,
+        "failure_reason": failure_reason,  # why THIS attempt itself failed — was
+                                            # previously only captured as "prior"
+                                            # for later attempts, never for the
+                                            # attempt's own failure. Needed for
+                                            # honest per-mandate failure-reason
+                                            # display (not a model feature).
         "_true_probability": round(float(prob), 4),  # kept for audit only,
                                                        # NOT a model feature
         "outcome_success": outcome,

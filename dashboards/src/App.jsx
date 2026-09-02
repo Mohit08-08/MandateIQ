@@ -1,33 +1,51 @@
 import { useEffect, useState } from "react";
+import { useAuth } from "./context/AuthContext";
 import { getSummary, getMandates, getMandateDetail, getModelInfo, getFallbackActions } from "./api";
+import Login from "./pages/Login";
+import Sidebar from "./components/Sidebar";
 import Scoreboard from "./components/Scoreboard";
 import ComparisonChart from "./components/ComparisonChart";
+import RetryFlowDiagram from "./components/RetryFlowDiagram";
+import RetryTimingChart from "./components/RetryTimingChart";
+import RecoveryFunnel from "./components/RecoveryFunnel";
+import RevenueAtRisk from "./components/RevenueAtRisk";
+import PageHeader from "./components/PageHeader";
 import MandatesTable from "./components/MandatesTable";
 import MandateDrillDown from "./components/MandateDrillDown";
+import AgentPage from "./components/AgentPage";
 import ModelPanel from "./components/ModelPanel";
 import FallbackPanel from "./components/FallbackPanel";
-
-const TABS = ["Overview", "Mandates", "Model", "Fallback Actions"];
+import AuditLogExplorer from "./components/AuditLogExplorer";
 
 export default function App() {
+  const { isDemoActive } = useAuth();
+  if (!isDemoActive) return <Login />;
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [mandates, setMandates] = useState(null);
+  const [baselineMandates, setBaselineMandates] = useState(null);
   const [model, setModel] = useState(null);
   const [fallbackActions, setFallbackActions] = useState(null);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("Overview");
   const [selectedMandate, setSelectedMandate] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     Promise.all([
       getSummary(),
       getMandates("agent"),
+      getMandates("baseline"),
       getModelInfo(),
       getFallbackActions("agent"),
     ])
-      .then(([s, m, mo, fa]) => {
+      .then(([s, m, bm, mo, fa]) => {
         setSummary(s);
         setMandates(m);
+        setBaselineMandates(bm);
         setModel(mo);
         setFallbackActions(fa);
       })
@@ -66,59 +84,93 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-ink-600 px-6 py-5">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="font-display text-xl font-semibold text-text-primary">
-              Mandate<span className="text-recovery">IQ</span>
-            </h1>
-            <p className="text-xs text-text-muted mt-0.5">
-              Smart retry-timing agent for failed UPI Autopay mandates
-            </p>
-          </div>
-          <span className="text-xs font-mono text-text-faint bg-ink-800 border border-ink-600 rounded-full px-3 py-1.5">
-            {summary.agent.total_mandates} mandates &middot; batch complete
+    <div className="min-h-screen md:flex">
+      <Sidebar
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
+      />
+
+      <div className="flex-1 min-w-0">
+        <header className="md:hidden border-b border-ink-600 px-4 py-3 flex items-center justify-between">
+          <button onClick={() => setMobileNavOpen(true)} className="text-text-muted">
+            ☰
+          </button>
+          <span className="font-display text-sm text-text-primary">
+            Mandate<span className="text-recovery">IQ</span>
           </span>
-        </div>
-      </header>
+          <span className="w-6" />
+        </header>
 
-      <nav className="border-b border-ink-600 px-6">
-        <div className="max-w-5xl mx-auto flex gap-1">
-          {TABS.map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab
-                  ? "border-recovery text-text-primary"
-                  : "border-transparent text-text-faint hover:text-text-muted"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-      </nav>
+        <main className="max-w-5xl mx-auto px-6 py-8">
+          <div key={activeTab} className="tab-fade-in">
+            {activeTab === "Overview" && (
+              <div className="space-y-6">
+                <PageHeader title="Overview" subtitle="Recover more revenue with smarter retry timing." />
+                <Scoreboard summary={summary} />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <RecoveryFunnel summary={summary} />
+                  <RevenueAtRisk summary={summary} />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+                  <div className="md:col-span-2">
+                    <ComparisonChart agent={summary.agent} baseline={summary.baseline} />
+                  </div>
+                  <div className="md:col-span-3">
+                    <RetryFlowDiagram />
+                  </div>
+                </div>
+                <RetryTimingChart />
+              </div>
+            )}
 
-      <main className="max-w-5xl mx-auto px-6 py-8">
-        {activeTab === "Overview" && (
-          <div className="space-y-6">
-            <Scoreboard summary={summary} />
-            <ComparisonChart agent={summary.agent} baseline={summary.baseline} />
+            {activeTab === "Mandates" && (
+              <div>
+                <PageHeader title="Mandates" subtitle="Every mandate in the batch, agent vs. baseline outcome." />
+                <MandatesTable
+                  mandates={mandates}
+                  baselineMandates={baselineMandates}
+                  onSelect={handleSelectMandate}
+                />
+              </div>
+            )}
+
+            {activeTab === "Agent" && <AgentPage summary={summary} />}
+
+            {activeTab === "Model" && (
+              <div>
+                <PageHeader title="Model" subtitle="What influences the recovery decision." />
+                <ModelPanel model={model} />
+              </div>
+            )}
+
+            {activeTab === "Fallback Actions" && (
+              <div>
+                <PageHeader title="Fallback Actions" subtitle="Mandates that exhausted their retry cap." />
+                <FallbackPanel actions={fallbackActions ?? []} onSelectMandate={handleSelectMandate} />
+              </div>
+            )}
+
+            {activeTab === "Audit Trail" && (
+              <div>
+                <PageHeader title="Audit Trail" subtitle="Every decision, its reasoning, and its outcome." />
+                <AuditLogExplorer />
+              </div>
+            )}
           </div>
-        )}
+        </main>
+      </div>
 
-        {activeTab === "Mandates" && (
-          <MandatesTable mandates={mandates} onSelect={handleSelectMandate} />
-        )}
-
-        {activeTab === "Model" && <ModelPanel model={model} />}
-
-        {activeTab === "Fallback Actions" && (
-          <FallbackPanel actions={fallbackActions ?? []} />
-        )}
-      </main>
+      <style>{`
+        .tab-fade-in {
+          animation: tab-fade-in 0.35s ease-out;
+        }
+        @keyframes tab-fade-in {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
 
       {selectedMandate && (
         <MandateDrillDown data={selectedMandate} onClose={() => setSelectedMandate(null)} />
